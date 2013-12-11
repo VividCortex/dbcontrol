@@ -32,19 +32,10 @@ All databases opened by the package afterwards will use a maximum of 10
 connections. You can change this setting as often as you wish, but keep in mind
 that the number is bound to databases as they are opened, i.e., changing this
 concurrency setting has no effect on already-opened databases. Note also that
-you can get the default non-limited behavior by setting concurrency to zero.
+you can get the default non-limited behavior by setting concurrency to zero. To
+open a DB you proceed just like with the database/sql package, like so:
 
-To create a DB you open it as usual using the database/sql package and then
-proceed to wrap it up with this package. You no longer have to keep track of the
-original sql.DB object; you should always use the dbcontrol.DB object returned
-by the NewDB() call, like so:
-
-	sqldb, err := sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db := dbcontrol.NewDB(sqldb)
+	db, err := dbcontrol.Open("mysql", dsn)
 
 Note that sql.Row, sql.Rows and sql.Stmt types are overridden by this package,
 but that's probably transparent unless you declare the types explicitly. If you
