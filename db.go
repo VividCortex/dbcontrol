@@ -29,17 +29,9 @@ connections. You can change this setting as often as you wish, but keep in mind
 that the number is bound to databases as they are opened, i.e., changing this
 concurrency setting has no effect on already-opened databases. Note also that
 you can get the default non-limited behavior by setting concurrency to zero. To
-create a DB you open it as usual using the database/sql package and then proceed
-to wrap it up with this package. You no longer have to keep track of the
-original sql.DB object; you should always use the dbcontrol.DB object returned
-by the NewDB() call, like so:
+open a DB you proceed just like with the database/sql package, like so:
 
-	sqldb, err := sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db := dbcontrol.NewDB(sqldb)
+	db, err := dbcontrol.Open("mysql", dsn)
 
 Note that sql.Row, sql.Rows and sql.Stmt types are overridden by this package,
 but that's probably transparent unless you declare the types explicitly. If you
@@ -92,8 +84,13 @@ type DB struct {
 	blockChMux sync.RWMutex
 }
 
-// NewDB initializes a new DB wrapper on a given sql.DB.
-func NewDB(sqldb *sql.DB) *DB {
+func Open(driver, dsn string) (*DB, error) {
+	sqldb, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	// We wrap *sql.DB into our DB
 	db := &DB{DB: sqldb}
 
 	if c := Concurrency(); c > 0 {
@@ -110,7 +107,7 @@ func NewDB(sqldb *sql.DB) *DB {
 		db.maxConns = c
 	}
 
-	return db
+	return db, nil
 }
 
 // MaxConn returns the maximum number of connections for the DB.
