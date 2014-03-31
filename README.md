@@ -8,7 +8,7 @@ or sql.Stmt variables, you can use dbcontrol just by adding a couple of calls
 (setting the actual limit and wrapping up the DB) and using dbcontrol.DB instead
 of sql.DB. All operations from database/sql are then transparently supported.
 
-We use this package at [VividCortes](https://vividcortex.com/) to cope with
+We use this package at [VividCortex](https://vividcortex.com/) to cope with
 concurrent access to our HTTP servers, while a native solution to limit the
 number of connections is not included in Go's standard library itself.
 
