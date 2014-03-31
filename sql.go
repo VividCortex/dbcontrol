@@ -4,6 +4,7 @@ package dbcontrol
 
 import (
 	"database/sql"
+	"runtime/debug"
 	"time"
 )
 
@@ -25,27 +26,90 @@ func (db *DB) SetBlockDurationCh(c chan<- time.Duration) {
 	db.blockCh = c
 }
 
+// SetUsageTimeout sets a maximum time for connection usage since it was granted
+// to the caller (i.e., usage starts when a spare connection could be withdrawn
+// from the pool, in case connection limiting is in use; see SetConcurrency()).
+// After the time has elapsed a notification will be sent to the provided
+// channel including the stack trace for the offending consumer (at the time the
+// connection was requested). Setting the timeout to zero (the default) disables
+// this feature. Note that this function is safe to be called anytime.  Changes
+// in the timeout will take effect for new requests; pending timers will still
+// use the previous value. Changing the channel takes effect immediately,
+// though. The previously set channel is guaranteed not to be used again after
+// SetUsageTimeout() returns, thus allowing to safely close it if appropriate.
+// Setting the channel to nil disables all pending and future notifications,
+// until set to another valid channel. Note though that, in order to avoid
+// needless resource usage, setting the channel to nil implies that no further
+// timers will be started. (That is, you won't get a notification for a long
+// running consumer that requested a connection when the channel was nil, even
+// if you set the channel to a non-nil value before the timeout would expire.
+// Consider fixing the channel and filtering events when reading from it if
+// you're looking for that effect.) Note also that the timer expiring, whether
+// notified or not, has no effect whatsoever on the routine using the
+// connection.
+func (db *DB) SetUsageTimeout(c chan<- string, timeout time.Duration) {
+	db.usageTimeoutMux.Lock()
+	defer db.usageTimeoutMux.Unlock()
+	db.usageTimeoutCh = c
+
+	if c != nil {
+		db.usageTimeout = timeout
+	} else {
+		db.usageTimeout = 0
+	}
+}
+
 func (db *DB) conn() func() {
-	if db.sem == nil {
-		// Not using tokens
-		return func() {}
+	releaseLock := func() {}
+
+	if db.sem != nil {
+		select {
+		case <-db.sem:
+		default:
+			start := time.Now()
+			<-db.sem
+
+			db.blockChMux.RLock()
+			if db.blockCh != nil {
+				db.blockCh <- time.Now().Sub(start)
+			}
+			db.blockChMux.RUnlock()
+		}
+
+		releaseLock = func() {
+			db.sem <- true
+		}
 	}
 
-	select {
-	case <-db.sem:
-	default:
-		start := time.Now()
-		<-db.sem
+	db.usageTimeoutMux.RLock()
+	usageTimeout := db.usageTimeout
+	db.usageTimeoutMux.RUnlock()
+	cancelUsageTimeout := func() {}
 
-		db.blockChMux.RLock()
-		if db.blockCh != nil {
-			db.blockCh <- time.Now().Sub(start)
+	if usageTimeout != 0 {
+		cancelTimeoutCh := make(chan struct{}, 1)
+		cancelUsageTimeout = func() {
+			cancelTimeoutCh <- struct{}{}
+			close(cancelTimeoutCh)
 		}
-		db.blockChMux.RUnlock()
+		stack := debug.Stack()
+
+		go func() {
+			select {
+			case <-time.After(usageTimeout):
+				db.usageTimeoutMux.RLock()
+				if db.usageTimeoutCh != nil {
+					db.usageTimeoutCh <- string(stack)
+				}
+				db.usageTimeoutMux.RUnlock()
+			case <-cancelTimeoutCh:
+			}
+		}()
 	}
 
 	return func() {
-		db.sem <- true
+		releaseLock()
+		cancelUsageTimeout()
 	}
 }
 

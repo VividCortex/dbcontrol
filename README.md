@@ -63,7 +63,14 @@ to provide the feature with minimum overhead, and thus uses knowledge of
 database/sql internals to know when locking is required/appropriate. As an
 extension, you can set a channel to receive the locking duration each time a
 connection has to be waited for. This can work as an aid to help you tune the
-pool size or otherwise work around concurrency problems.
+pool size or otherwise work around concurrency problems. You can also set a
+channel where notifications will be sent every time a connection is held for
+longer than a certain timeout. The notification includes the full stack trace of
+the caller at the time the connection was requested. This can prove useful to
+identify long-running queries that are locking connections, and possibly
+impeding others from running. The feature can be turned on and off at will. A
+small performance penalty will be paid if on (that of retrieving the caller's
+stack), but none if the feature is off (the default).
 
 Contributing
 ============
