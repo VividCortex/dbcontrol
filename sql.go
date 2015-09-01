@@ -247,6 +247,7 @@ func (s *Stmt) QueryRow(args ...interface{}) *Row {
 
 type Tx struct {
 	*sql.Tx
+	closed  bool
 	release func()
 }
 
@@ -263,11 +264,21 @@ func (db *DB) Begin() (*Tx, error) {
 }
 
 func (tx *Tx) Commit() error {
-	defer tx.release()
+	if !tx.closed {
+		defer func() {
+			tx.release()
+			tx.closed = true
+		}()
+	}
 	return tx.Tx.Commit()
 }
 
 func (tx *Tx) Rollback() error {
-	defer tx.release()
+	if !tx.closed {
+		defer func() {
+			tx.release()
+			tx.closed = true
+		}()
+	}
 	return tx.Tx.Rollback()
 }
