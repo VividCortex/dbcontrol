@@ -113,6 +113,8 @@ func (db *DB) conn() func() {
 	}
 }
 
+var dummyRelease func() = func() {}
+
 // SetMaxIdleConns sets the maximum number of idle connections to the database.
 // However, note that this only makes sense if you're not limiting the number
 // of concurrent connections. Databases opened under SetConcurrency(n) for n>0
@@ -205,8 +207,8 @@ func (row *Row) Scan(dest ...interface{}) error {
 }
 
 type Stmt struct {
-	*sql.Stmt
-	db *DB
+	stmt *sql.Stmt
+	db   *DB
 }
 
 func (db *DB) Prepare(query string) (*Stmt, error) {
@@ -218,19 +220,30 @@ func (db *DB) Prepare(query string) (*Stmt, error) {
 		return nil, err
 	}
 
-	return &Stmt{Stmt: stmt, db: db}, nil
+	return &Stmt{stmt: stmt, db: db}, nil
+}
+
+func (s *Stmt) Close() error {
+	return s.stmt.Close()
 }
 
 func (s *Stmt) Exec(args ...interface{}) (sql.Result, error) {
-	release := s.db.conn()
-	defer release()
-	return s.Stmt.Exec(args...)
+	if s.db != nil {
+		release := s.db.conn()
+		defer release()
+	}
+	return s.stmt.Exec(args...)
 }
 
 func (s *Stmt) Query(args ...interface{}) (*Rows, error) {
-	release := s.db.conn()
-	rows, err := s.Stmt.Query(args...)
+	var release func()
+	if s.db == nil {
+		release = dummyRelease
+	} else {
+		release = s.db.conn()
+	}
 
+	rows, err := s.stmt.Query(args...)
 	if err != nil {
 		release()
 		return nil, err
@@ -240,13 +253,18 @@ func (s *Stmt) Query(args ...interface{}) (*Rows, error) {
 }
 
 func (s *Stmt) QueryRow(args ...interface{}) *Row {
-	release := s.db.conn()
-	row := s.Stmt.QueryRow(args...)
+	var release func()
+	if s.db == nil {
+		release = dummyRelease
+	} else {
+		release = s.db.conn()
+	}
+	row := s.stmt.QueryRow(args...)
 	return &Row{Row: row, release: release}
 }
 
 type Tx struct {
-	*sql.Tx
+	trn     *sql.Tx
 	closed  bool
 	release func()
 }
@@ -260,7 +278,7 @@ func (db *DB) Begin() (*Tx, error) {
 		return nil, err
 	}
 
-	return &Tx{Tx: tx, release: release}, nil
+	return &Tx{trn: tx, release: release}, nil
 }
 
 func (tx *Tx) Commit() error {
@@ -270,7 +288,29 @@ func (tx *Tx) Commit() error {
 			tx.closed = true
 		}()
 	}
-	return tx.Tx.Commit()
+	return tx.trn.Commit()
+}
+
+func (tx *Tx) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return tx.trn.Exec(query, args...)
+}
+
+func (tx *Tx) Prepare(query string) (*Stmt, error) {
+	stmt, err := tx.trn.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	return &Stmt{stmt: stmt}, nil
+}
+
+func (tx *Tx) Query(query string, args ...interface{}) (*Rows, error) {
+	rows, err := tx.trn.Query(query, args...)
+	return &Rows{Rows: rows, release: dummyRelease}, err
+}
+
+func (tx *Tx) QueryRow(query string, args ...interface{}) *Row {
+	row := tx.trn.QueryRow(query, args...)
+	return &Row{Row: row, release: dummyRelease}
 }
 
 func (tx *Tx) Rollback() error {
@@ -280,5 +320,10 @@ func (tx *Tx) Rollback() error {
 			tx.closed = true
 		}()
 	}
-	return tx.Tx.Rollback()
+	return tx.trn.Rollback()
+}
+
+func (tx *Tx) Stmt(stmt *Stmt) *Stmt {
+	newStmt := tx.trn.Stmt(stmt.stmt)
+	return &Stmt{stmt: newStmt}
 }
