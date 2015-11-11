@@ -161,8 +161,8 @@ func (rows *Rows) Next() bool {
 	}
 
 	next := rows.Rows.Next()
-	if !next && rows.Rows.Err() == nil {
-		// EOF: the result set was closed by Rows.Next()
+	if !next {
+		// EOF or error: the result set was closed by Rows.Next()
 		rows.release()
 		rows.closed = true
 	}
